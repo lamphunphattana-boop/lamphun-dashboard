@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard กลุ่มเปราะบาง - พมจ.ลำพูน</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 620px; border-radius: 0.75rem; z-index: 1; cursor: pointer; }
+        .leaflet-popup-content-wrapper { background: #ffffff; color: #1f2937; border: 1px solid #e5e7eb; border-radius: 0.75rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+        .leaflet-popup-tip { background: #ffffff; }
+        .leaflet-popup-content b { color: #db2777; font-size: 1.2em; }
+        
+        /* Toast เด้งกลางจอเด่นชัด */
+        #toast-container { 
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); 
+            transform: translate(-50%, -30px) scale(0.85); 
+            opacity: 0; 
+            pointer-events: none; 
+        }
+        #toast-container.show { 
+            transform: translate(-50%, 0) scale(1); 
+            opacity: 1; 
+            pointer-events: auto; 
+        }
+        .progress-bar { transition: width 0.5s ease-in-out; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen antialiased flex flex-col justify-between">
+
+    <!-- Toast แจ้งเตือนกลางจอ -->
+    <div id="toast-container" class="fixed top-1/2 left-1/2 z-50 bg-slate-900 border-2 border-pink-500 text-white px-8 py-5 rounded-3xl shadow-2xl flex items-center gap-5 w-full max-w-lg -translate-x-1/2 -translate-y-1/2">
+        <div class="w-12 h-12 rounded-2xl bg-pink-600 flex items-center justify-center text-2xl font-bold shadow-lg shrink-0 animate-bounce">
+            🔔
+        </div>
+        <div>
+            <p class="text-xs text-pink-400 font-bold uppercase tracking-wider">ระบบแจ้งเตือน (SYSTEM NOTIFICATION)</p>
+            <p id="toast-message" class="text-lg font-bold text-white mt-0.5">ดำเนินการสำเร็จ</p>
+        </div>
+    </div>
+
+    <!-- แถบด้านบน (Navbar) -->
+    <nav class="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
+        <div>
+            <h1 class="text-xl font-bold text-pink-600">พมจ.ลำพูน | Dashboard กลุ่มเปราะบาง</h1>
+            <p class="text-xs text-slate-500">สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัดลำพูน</p>
+        </div>
+        <div>
+            <div id="guest-nav">
+                <button onclick="openLoginModal()" class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-sm font-medium transition shadow-sm flex items-center gap-2">
+                    <span>🔒 เข้าสู่ระบบเจ้าหน้าที่</span>
+                </button>
+            </div>
+            <div id="admin-nav" class="hidden flex items-center gap-4">
+                <span class="text-xs bg-pink-50 text-pink-600 px-3 py-1.5 rounded-full border border-pink-200 font-medium">👤 เจ้าหน้าที่ พม. (ผู้ดูแลระบบ)</span>
+                <button onclick="logout()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs text-red-600 font-medium transition">ออกจากระบบ</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- เนื้อหาหลัก -->
+    <main class="max-w-7xl mx-auto w-full p-6 space-y-6 flex-grow">
+        
+        <!-- แผนที่ -->
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <header class="mb-3 px-2 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-800">แผนที่แสดงพื้นที่เปราะบางรายตำบล</h2>
+                    <p id="selected-area-label" class="text-xs text-slate-500">ภาพรวมทั้งจังหวัด (คลิกเลือกตำบลเพื่อดูสถิติเชิงลึกของพื้นที่)</p>
+                </div>
+            </header>
+            <div id="map"></div>
+        </div>
+
+        <!-- แดชบอร์ดข้อมูล -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 id="stat-title" class="text-slate-900 text-lg font-extrabold">สถิติภาพรวม</h3>
+                        <button id="reset-btn" class="text-xs text-pink-600 hover:underline hidden font-bold bg-pink-50 px-2.5 py-1 rounded-lg border border-pink-200">แสดงทั้งหมด</button>
+                    </div>
+
+                    <div class="space-y-3 mb-5 text-left">
+                        <select id="dash-amphoe" onchange="onDashboardAmphoeChange()" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3.5 text-sm text-slate-900 font-bold focus:outline-none focus:border-pink-500 shadow-sm">
+                            <option value="">-- เลือกดูตามอำเภอ --</option>
+                            <option value="เมืองลำพูน">อ.เมืองลำพูน</option>
+                            <option value="ป่าซาง">อ.ป่าซาง</option>
+                            <option value="แม่ทา">อ.แม่ทา</option>
+                            <option value="ลี้">อ.ลี้</option>
+                            <option value="บ้านโฮ่ง">อ.บ้านโฮ่ง</option>
+                            <option value="ทุ่งหัวช้าง">อ.ทุ่งหัวช้าง</option>
+                            <option value="เวียงหนองล่อง">อ.เวียงหนองล่อง</option>
+                            <option value="บ้านธิ">อ.บ้านธิ</option>
+                        </select>
+
+                        <select id="dash-tambon" onchange="onDashboardTambonChange()" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3.5 text-sm text-slate-900 font-bold focus:outline-none focus:border-pink-500 shadow-sm">
+                            <option value="">-- เลือกดูตามตำบล --</option>
+                        </select>
+                    </div>
+
+                    <div class="bg-gradient-to-br from-pink-500 to-rose-600 p-8 rounded-3xl border border-pink-400 shadow-xl text-white">
+                        <span class="text-sm font-semibold tracking-wide uppercase opacity-90">ครัวเรือนที่สำรวจในพื้นที่นี้</span>
+                        <p id="stat-number" class="text-7xl font-black mt-2 tracking-tight drop-shadow-md">3</p>
+                        <div class="mt-3 inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
+                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> ข้อมูลอัปเดตแบบเรียลไทม์
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2 space-y-6">
+                <div>
+                    <h3 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+                        <span>📊 สัดส่วนประเภทกลุ่มเปราะบาง (ตามระเบียบ พม.)</span>
+                    </h3>
+                    <div class="space-y-3.5 bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5 font-semibold"><span class="text-slate-700">👴 ผู้สูงอายุ</span><span id="txt-elder" class="font-bold text-blue-600 text-base">1 คน (33.3%)</span></div>
+                            <div class="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden shadow-inner"><div id="bar-elder" class="bg-blue-600 h-full rounded-full progress-bar" style="width: 33.3%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5 font-semibold"><span class="text-slate-700">♿ คนพิการ</span><span id="txt-disbled" class="font-bold text-purple-600 text-base">1 คน (33.3%)</span></div>
+                            <div class="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden shadow-inner"><div id="bar-disbled" class="bg-purple-600 h-full rounded-full progress-bar" style="width: 33.3%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5 font-semibold"><span class="text-slate-700">👶 เด็กและเยาวชน</span><span id="txt-child" class="font-bold text-pink-600 text-base">1 คน (33.3%)</span></div>
+                            <div class="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden shadow-inner"><div id="bar-child" class="bg-pink-600 h-full rounded-full progress-bar" style="width: 33.3%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5 font-semibold"><span class="text-slate-700">🤝 ผู้ด้อยโอกาส</span><span id="txt-poor" class="font-bold text-amber-600 text-base">0 คน (0.0%)</span></div>
+                            <div class="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden shadow-inner"><div id="bar-poor" class="bg-amber-500 h-full rounded-full progress-bar" style="width: 0%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5 font-semibold"><span class="text-slate-700">👩 สตรีและครอบครัว</span><span id="txt-family" class="font-bold text-teal-600 text-base">0 คน (0.0%)</span></div>
+                            <div class="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden shadow-inner"><div id="bar-family" class="bg-teal-500 h-full rounded-full progress-bar" style="width: 0%"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-base font-bold text-slate-800 mb-3">📌 สถานะการเข้าช่วยเหลือ</h3>
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <div class="bg-emerald-50/90 p-4 rounded-2xl border border-emerald-200 shadow-sm flex flex-col justify-center">
+                            <span class="text-xs text-emerald-800 font-bold uppercase tracking-wide">✅ ช่วยเหลือแล้ว</span>
+                            <p id="status-done" class="text-3xl font-extrabold text-emerald-600 mt-1">1</p>
+                            <span id="pct-done" class="text-xs text-emerald-700 font-semibold mt-0.5">(33.3%)</span>
+                        </div>
+                        <div class="bg-amber-50/90 p-4 rounded-2xl border border-amber-200 shadow-sm flex flex-col justify-center">
+                            <span class="text-xs text-amber-800 font-bold uppercase tracking-wide">🔄 กำลังดำเนินการ</span>
+                            <p id="status-process" class="text-3xl font-extrabold text-amber-600 mt-1">1</p>
+                            <span id="pct-process" class="text-xs text-amber-700 font-semibold mt-0.5">(33.3%)</span>
+                        </div>
+                        <div class="bg-rose-50/90 p-4 rounded-2xl border border-rose-200 shadow-sm flex flex-col justify-center">
+                            <span class="text-xs text-rose-800 font-bold uppercase tracking-wide">⏳ ยังไม่ช่วยเหลือ</span>
+                            <p id="status-pending" class="text-3xl font-extrabold text-rose-600 mt-1">1</p>
+                            <span id="pct-pending" class="text-xs text-rose-700 font-semibold mt-0.5">(33.3%)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="area-details-box" class="pt-3 border-t border-slate-100 text-xs text-slate-500 flex justify-between items-center">
+                    <span>สถานะพื้นที่: <strong class="text-slate-800 font-bold text-sm" id="area-status-text">ภาพรวมทุกอำเภอ</strong></span>
+                    <span class="text-pink-600 font-semibold">💡 เลือกจากเมนูด้านบน หรือคลิกแผนที่เพื่อดูข้อมูลเฉพาะพื้นที่</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ส่วนจัดการข้อมูลหลังบ้าน -->
+        <div id="admin-panel" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-pink-200 space-y-4">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-100 pb-4">
+                <div>
+                    <h3 class="text-lg font-bold text-pink-600">🛡️ จัดการฐานข้อมูลเชิงลึก (เฉพาะเจ้าหน้าที่)</h3>
+                    <p class="text-xs text-slate-500">ระบบบันทึก เพิ่ม แก้ไข และจัดการข้อมูลรายครัวเรือน</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="text" id="search-input" onkeyup="filterTableByDropdown()" placeholder="🔍 ค้นหาชื่อ หรือบ้านเลขที่..." class="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 focus:outline-none focus:border-pink-500 w-48">
+
+                    <select id="filter-amphoe" onchange="updateFilterTambonOptions(); filterTableByDropdown();" class="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 focus:outline-none focus:border-pink-500">
+                        <option value="">-- อำเภอ (ทั้งหมด) --</option>
+                        <option value="เมืองลำพูน">อ.เมืองลำพูน</option>
+                        <option value="ป่าซาง">อ.ป่าซาง</option>
+                        <option value="แม่ทา">อ.แม่ทา</option>
+                        <option value="ลี้">อ.ลี้</option>
+                        <option value="บ้านโฮ่ง">อ.บ้านโฮ่ง</option>
+                        <option value="ทุ่งหัวช้าง">อ.ทุ่งหัวช้าง</option>
+                        <option value="เวียงหนองล่อง">อ.เวียงหนองล่อง</option>
+                        <option value="บ้านธิ">อ.บ้านธิ</option>
+                    </select>
+
+                    <select id="filter-tambon" onchange="filterTableByDropdown()" class="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 focus:outline-none focus:border-pink-500">
+                        <option value="">-- ตำบล (ทั้งหมด) --</option>
+                    </select>
+
+                    <button onclick="exportToExcel()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-medium transition shadow-sm flex items-center gap-1">
+                        <span>📊 Export Excel</span>
+                    </button>
+                    <button onclick="openModal()" class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-xs font-medium transition shadow-sm">
+                        + เพิ่มข้อมูล
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="w-full text-left text-sm text-slate-700">
+                    <thead class="bg-slate-50 text-slate-500 uppercase text-xs sticky top-0 z-10 border-b border-slate-200">
+                        <tr>
+                            <th class="p-3.5">วัน/เวลาที่บันทึก</th>
+                            <th class="p-3.5">ชื่อ-นามสกุล / อายุ / เพศ</th>
+                            <th class="p-3.5">ที่อยู่ (บ้าน/หมู่/ถนน/ซอย/ต./อ.)</th>
+                            <th class="p-3.5">เบอร์โทรศัพท์</th>
+                            <th class="p-3.5">กลุ่มเปราะบาง</th>
+                            <th class="p-3.5">สถานะการช่วยเหลือ</th>
+                            <th class="p-3.5 text-center">จัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="case-table-body" class="divide-y divide-slate-100">
+                        <!-- รายการข้อมูล -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal หน้า Login เจ้าหน้าที่ -->
+    <div id="login-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex justify-center items-center p-4">
+        <div class="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-8 shadow-2xl space-y-5">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="text-lg font-bold text-slate-800">เข้าสู่ระบบสำหรับเจ้าหน้าที่</h3>
+                <button onclick="closeLoginModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+            </div>
+            <form onsubmit="handleLogin(event)" class="space-y-4 text-sm">
+                <div>
+                    <label class="block text-slate-600 mb-1 font-medium">ชื่อผู้ใช้งาน (Username)</label>
+                    <input type="text" id="login-user" required placeholder="admin" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                </div>
+                <div>
+                    <label class="block text-slate-600 mb-1 font-medium">รหัสผ่าน (Password)</label>
+                    <input type="password" id="login-pass" required placeholder="1234" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                </div>
+                <p class="text-xs text-slate-400">*(ทดสอบระบบ: กรอก Username: <b>admin</b> และ Password: <b>1234</b>)</p>
+                <div class="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                    <button type="button" onclick="closeLoginModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-600">ยกเลิก</button>
+                    <button type="submit" class="px-5 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-xl shadow-sm">ยืนยันเข้าสู่ระบบ</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal ฟอร์ม เพิ่ม/แก้ไข ข้อมูลเชิงลึก -->
+    <div id="case-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex justify-center items-center p-4">
+        <div class="bg-white border border-slate-200 rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
+            <div class="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                <h3 id="modal-title" class="text-xl font-bold text-slate-800">บันทึกข้อมูลกลุ่มเปราะบาง</h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+            </div>
+            
+            <form id="case-form" onsubmit="saveCase(event)" class="space-y-4 text-sm">
+                <input type="hidden" id="case-id">
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="md:col-span-1">
+                        <label class="block text-slate-600 mb-1 font-medium">ชื่อ-นามสกุล *</label>
+                        <input type="text" id="fname" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">อายุ (ปี) *</label>
+                        <input type="number" id="age" required placeholder="เช่น 65" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">เพศ *</label>
+                        <select id="gender" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                            <option value="ชาย">ชาย</option>
+                            <option value="หญิง">หญิง</option>
+                            <option value="อื่นๆ">อื่นๆ</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">บ้านเลขที่ *</label>
+                        <input type="text" id="house-no" required placeholder="เช่น 123" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">หมู่ที่</label>
+                        <input type="text" id="moo" placeholder="เช่น หมู่ 1" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">ถนน / ซอย</label>
+                        <input type="text" id="street" placeholder="เช่น ถ.เจริญราษฎร์ / ซ.1" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">หมู่บ้าน / ชุมชน</label>
+                        <input type="text" id="village" placeholder="ชื่อหมู่บ้าน/ชุมชน" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">อำเภอ *</label>
+                        <select id="amphoe-select" onchange="updateTambonOptions()" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                            <option value="">-- เลือกอำเภอ --</option>
+                            <option value="เมืองลำพูน">อ.เมืองลำพูน</option>
+                            <option value="ป่าซาง">อ.ป่าซาง</option>
+                            <option value="แม่ทา">อ.แม่ทา</option>
+                            <option value="ลี้">อ.ลี้</option>
+                            <option value="บ้านโฮ่ง">อ.บ้านโฮ่ง</option>
+                            <option value="ทุ่งหัวช้าง">อ.ทุ่งหัวช้าง</option>
+                            <option value="เวียงหนองล่อง">อ.เวียงหนองล่อง</option>
+                            <option value="บ้านธิ">อ.บ้านธิ</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">ตำบล *</label>
+                        <select id="tambon-select" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                            <option value="">-- เลือกอำเภอก่อน --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">เบอร์โทรศัพท์</label>
+                        <input type="text" id="phone" placeholder="0812345678" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">โรคประจำตัว</label>
+                        <input type="text" id="disease" placeholder="เช่น ความดัน (- ถ้าไม่มี)" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">ประเภทกลุ่มเปราะบาง *</label>
+                        <select id="vulnerable-type" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                            <option value="ผู้สูงอายุ">ผู้สูงอายุ</option>
+                            <option value="คนพิการ">คนพิการ</option>
+                            <option value="เด็กและเยาวชน">เด็กและเยาวชน</option>
+                            <option value="ผู้ด้อยโอกาส">ผู้ด้อยโอกาส</option>
+                            <option value="สตรีและครอบครัว">สตรีและครอบครัว</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">สถานะการช่วยเหลือ *</label>
+                        <select id="help-status" required class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                            <option value="ยังไม่ช่วยเหลือ">⏳ ยังไม่ช่วยเหลือ</option>
+                            <option value="กำลังดำเนินการ">🔄 กำลังดำเนินการ</option>
+                            <option value="ช่วยเหลือแล้ว">✅ ช่วยเหลือแล้ว</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 mb-1 font-medium">รายละเอียดเพิ่มเติม</label>
+                        <input type="text" id="problem-detail" placeholder="ระบุรายละเอียด..." class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:outline-none focus:border-pink-500">
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                    <button type="button" onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-600">ยกเลิก</button>
+                    <button type="submit" class="px-6 py-2.5 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-xl shadow-sm">บันทึกข้อมูล</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 mt-12">
+        ระบบสารสนเทศเพื่อการบริหารจัดการกลุ่มเปราะบางเชิงพื้นที่ จังหวัดลำพูน © 2026
+    </footer>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const lamphunDistricts = {
+            "เมืองลำพูน": ["ต้นธง", "ในเมือง", "บ้านกลาง", "บ้านแป้น", "ประตูป่า", "ป่าสัก", "มะเขือแจ้", "ริมปิง", "เวียงยอง", "ศรีบัวบาน", "หนองช้างคืน", "หนองหนาม", "เหมืองง่า", "เหมืองจี้", "อุโมงค์"],
+            "ป่าซาง": ["ท่าตุ้ม", "นครเจดีย์", "น้ำดิบ", "บ้านเรือน", "ปากบ่อง", "ป่าซาง", "ม่วงน้อย", "มะกอก", "แม่แรง"],
+            "แม่ทา": ["ทากาศ", "ทาขุมเงิน", "ทาทุ่งหลวง", "ทาปลาดุก", "ทาแม่ลอบ", "ทาสบเส้า"],
+            "ลี้": ["ก้อ", "ดงดำ", "นาทราย", "ป่าไผ่", "แม่ตืน", "แม่ลาน", "ลี้", "ศรีวิชัย"],
+            "บ้านโฮ่ง": ["บ้านโฮ่ง", "ป่าพลู", "ศรีเตี้ย", "หนองปลาสะวาย", "เหล่ายาว"],
+            "ทุ่งหัวช้าง": ["ตะเคียนปม", "ทุ่งหัวช้าง", "บ้านปวง"],
+            "เวียงหนองล่อง": ["วังผาง", "หนองยวง", "หนองล่อง"],
+            "บ้านธิ": ["บ้านธิ", "ห้วยยาบ"]
+        };
+
+        const amphoeColors = {
+            "เมืองลำพูน": "#db2777",
+            "ป่าซาง": "#2563eb",
+            "แม่ทา": "#16a34a",
+            "ลี้": "#9333ea",
+            "บ้านโฮ่ง": "#ea580c",
+            "ทุ่งหัวช้าง": "#0d9488",
+            "เวียงหนองล่อง": "#ca8a04",
+            "บ้านธิ": "#dc2626"
+        };
+
+        function getAmphoeByTambon(tambonName) {
+            for (let amphoe in lamphunDistricts) {
+                if (lamphunDistricts[amphoe].includes(tambonName)) {
+                    return amphoe;
+                }
+            }
+            return "เมืองลำพูน";
+        }
+
+        let selectedTambonName = null;
+
+        function getFeatureStyle(feature) {
+            const tambonName = feature.properties.adm3_name1 || feature.properties.adm3_th || feature.properties.ADM3_TH || "";
+            const amphoeName = feature.properties.adm2_name1 || feature.properties.adm2_th || feature.properties.ADM2_TH || getAmphoeByTambon(tambonName);
+            
+            const baseColor = amphoeColors[amphoeName] || "#3b82f6";
+            const isSelected = (tambonName === selectedTambonName);
+
+            if (isSelected) {
+                return { 
+                    fillColor: baseColor, 
+                    weight: 3.5, 
+                    opacity: 1, 
+                    color: '#0f172a', 
+                    fillOpacity: 0.8 
+                };
+            }
+
+            return { 
+                fillColor: baseColor, 
+                weight: 1, 
+                opacity: 1, 
+                color: '#ffffff', 
+                fillOpacity: 0.5 
+            };
+        }
+
+        function updateTambonOptions(selectedTambon = "") {
+            const amphoeVal = document.getElementById('amphoe-select').value;
+            const tambonSelect = document.getElementById('tambon-select');
+            tambonSelect.innerHTML = '<option value="">-- เลือกตำบล --</option>';
+
+            if (lamphunDistricts[amphoeVal]) {
+                lamphunDistricts[amphoeVal].forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t;
+                    opt.textContent = "ต." + t;
+                    if(t === selectedTambon) opt.selected = true;
+                    tambonSelect.appendChild(opt);
+                });
+            }
+        }
+
+        function updateDashboardTambonOptions() {
+            const amphoeVal = document.getElementById('dash-amphoe').value;
+            const tambonSelect = document.getElementById('dash-tambon');
+            tambonSelect.innerHTML = '<option value="">-- เลือกดูตามตำบล --</option>';
+
+            if (lamphunDistricts[amphoeVal]) {
+                lamphunDistricts[amphoeVal].forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t;
+                    opt.textContent = "ต." + t;
+                    tambonSelect.appendChild(opt);
+                });
+            }
+            updateStatSummary(null, amphoeVal);
+
+            selectedTambonName = null;
+            if (geojsonLayer) geojsonLayer.setStyle(getFeatureStyle);
+
+            if (amphoeVal && geojsonLayer) {
+                let bounds = null;
+                geojsonLayer.eachLayer(layer => {
+                    const featAmphoe = layer.feature.properties.adm2_name1 || layer.feature.properties.adm2_th || layer.feature.properties.ADM2_TH || getAmphoeByTambon(layer.feature.properties.adm3_name1 || "");
+                    if (featAmphoe.includes(amphoeVal)) {
+                        if (!bounds) bounds = layer.getBounds();
+                        else bounds.extend(layer.getBounds());
+                    }
+                });
+                if (bounds && bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
+                }
+            }
+        }
+
+        function onDashboardAmphoeChange() {
+            updateDashboardTambonOptions();
+            const amphoeVal = document.getElementById('dash-amphoe').value;
+            document.getElementById('stat-title').innerText = amphoeVal ? `อำเภอ${amphoeVal}` : `สถิติภาพรวม`;
+            document.getElementById('reset-btn').classList.remove('hidden');
+        }
+
+        function onDashboardTambonChange() {
+            const tambonVal = document.getElementById('dash-tambon').value;
+            const amphoeVal = document.getElementById('dash-amphoe').value;
+            updateStatSummary(tambonVal, amphoeVal);
+            document.getElementById('stat-title').innerText = tambonVal ? `ตำบล${tambonVal}` : `อำเภอ${amphoeVal}`;
+            document.getElementById('reset-btn').classList.remove('hidden');
+
+            selectedTambonName = tambonVal;
+            if (tambonVal && geojsonLayer) {
+                geojsonLayer.eachLayer(layer => {
+                    const featTambon = layer.feature.properties.adm3_name1 || layer.feature.properties.adm3_th || layer.feature.properties.ADM3_TH || "";
+                    if (featTambon === tambonVal) {
+                        // ปรับ fitBounds ให้พอดีกับหน้า UI แผนที่เป๊ะๆ ไม่ไกลเกินไป
+                        map.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 12.5 });
+                        layer.bringToFront();
+                        layer.bindPopup(`<b>ต.${tambonVal}</b>`).openPopup();
+                    }
+                });
+                geojsonLayer.setStyle(getFeatureStyle);
+            }
+        }
+
+        function updateFilterTambonOptions(selectedTambon = "") {
+            const amphoeVal = document.getElementById('filter-amphoe').value;
+            const filterTambonSelect = document.getElementById('filter-tambon');
+            filterTambonSelect.innerHTML = '<option value="">-- ตำบล (ทั้งหมด) --</option>';
+
+            let tambonsToShow = [];
+            if (amphoeVal && lamphunDistricts[amphoeVal]) {
+                tambonsToShow = lamphunDistricts[amphoeVal];
+            } else {
+                for (let a in lamphunDistricts) {
+                    tambonsToShow = tambonsToShow.concat(lamphunDistricts[a]);
+                }
+                tambonsToShow.sort((a, b) => a.localeCompare(b, 'th'));
+            }
+
+            tambonsToShow.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t;
+                opt.textContent = "ต." + t;
+                if(t === selectedTambon) opt.selected = true;
+                filterTambonSelect.appendChild(opt);
+            });
+        }
+
+        function getTimestamp() {
+            const now = new Date();
+            const dateStr = now.toLocaleDateString('th-TH');
+            const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            return `${dateStr} (${timeStr} น.)`;
+        }
+
+        let casesData = [
+            { id: 1, timestamp: "02/09/2026 (13:30 น.)", fname: "นายสมชาย ใจดี", age: 68, gender: "ชาย", houseNo: "45", moo: "1", street: "ถ.เจริญราษฎร์", village: "บ้านสันป่าตอง", amphoe: "เมืองลำพูน", tambon: "ในเมือง", phone: "081-111-2222", disease: "ความดันโลหิตสูง", type: "ผู้สูงอายุ", status: "ช่วยเหลือแล้ว", detail: "บ้านชำรุด ซ่อมแซมเรียบร้อยแล้ว" },
+            { id: 2, timestamp: "02/09/2026 (14:00 น.)", fname: "นางสาวสมหญิง รักสงบ", age: 45, gender: "หญิง", houseNo: "89", moo: "3", street: "ซ.1", village: "บ้านหนองง่า", amphoe: "เมืองลำพูน", tambon: "เหมืองง่า", phone: "082-333-4444", disease: "อัมพฤกษ์", type: "คนพิการ", status: "กำลังดำเนินการ", detail: "ประสานจัดหารถเข็นวีลแชร์" },
+            { id: 3, timestamp: "02/09/2026 (14:15 น.)", fname: "เด็กชายมานพ เก่งเรียน", age: 12, gender: "ชาย", houseNo: "12", moo: "5", street: "-", village: "บ้านอุโมงค์", amphoe: "เมืองลำพูน", tambon: "อุโมงค์", phone: "089-555-6666", disease: "-", type: "เด็กและเยาวชน", status: "ยังไม่ช่วยเหลือ", detail: "รอพิจารณาทุนการศึกษา" }
+        ];
+
+        let isAdminLoggedIn = false;
+        let currentFilterTambon = null;
+        let geojsonLayer;
+        let lamphunBounds;
+
+        function showToast(message) {
+            const toast = document.getElementById('toast-container');
+            document.getElementById('toast-message').innerText = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3500);
+        }
+
+        function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
+        function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+
+        function handleLogin(event) {
+            event.preventDefault();
+            const u = document.getElementById('login-user').value;
+            const p = document.getElementById('login-pass').value;
+
+            if(u === "admin" && p === "1234") {
+                isAdminLoggedIn = true;
+                document.getElementById('guest-nav').classList.add('hidden');
+                document.getElementById('admin-nav').classList.remove('hidden');
+                document.getElementById('admin-panel').classList.remove('hidden');
+                closeLoginModal();
+                showToast("เข้าสู่ระบบเจ้าหน้าที่สำเร็จ (Administrator Mode Active)");
+                renderTable();
+            } else {
+                alert("ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง (ใช้ admin / 1234)");
+            }
+        }
+
+        function logout() {
+            isAdminLoggedIn = false;
+            document.getElementById('guest-nav').classList.remove('hidden');
+            document.getElementById('admin-nav').classList.add('hidden');
+            document.getElementById('admin-panel').classList.add('hidden');
+            showToast("ออกจากระบบเรียบร้อยแล้ว");
+        }
+
+        function updateStatSummary(filterTambon = null, filterAmphoe = null) {
+            let filtered = casesData;
+            if (filterTambon) {
+                filtered = filtered.filter(c => c.tambon === filterTambon);
+            } else if (filterAmphoe) {
+                filtered = filtered.filter(c => c.amphoe === filterAmphoe);
+            }
+
+            const total = filtered.length;
+            document.getElementById('stat-number').innerText = total;
+            
+            const elder = filtered.filter(c => c.type === "ผู้สูงอายุ").length;
+            const disbled = filtered.filter(c => c.type === "คนพิการ").length;
+            const child = filtered.filter(c => c.type === "เด็กและเยาวชน").length;
+            const poor = filtered.filter(c => c.type === "ผู้ด้อยโอกาส").length;
+            const family = filtered.filter(c => c.type === "สตรีและครอบครัว").length;
+
+            const pElder = total > 0 ? ((elder / total) * 100).toFixed(1) : 0;
+            const pDisbled = total > 0 ? ((disbled / total) * 100).toFixed(1) : 0;
+            const pChild = total > 0 ? ((child / total) * 100).toFixed(1) : 0;
+            const pPoor = total > 0 ? ((poor / total) * 100).toFixed(1) : 0;
+            const pFamily = total > 0 ? ((family / total) * 100).toFixed(1) : 0;
+
+            document.getElementById('txt-elder').innerText = `${elder} คน (${pElder}%)`;
+            document.getElementById('txt-disbled').innerText = `${disbled} คน (${pDisbled}%)`;
+            document.getElementById('txt-child').innerText = `${child} คน (${pChild}%)`;
+            document.getElementById('txt-poor').innerText = `${poor} คน (${pPoor}%)`;
+            document.getElementById('txt-family').innerText = `${family} คน (${pFamily}%)`;
+
+            document.getElementById('bar-elder').style.width = `${pElder}%`;
+            document.getElementById('bar-disbled').style.width = `${pDisbled}%`;
+            document.getElementById('bar-child').style.width = `${pChild}%`;
+            document.getElementById('bar-poor').style.width = `${pPoor}%`;
+            document.getElementById('bar-family').style.width = `${pFamily}%`;
+
+            const done = filtered.filter(c => c.status === "ช่วยเหลือแล้ว").length;
+            const process = filtered.filter(c => c.status === "กำลังดำเนินการ").length;
+            const pending = filtered.filter(c => c.status === "ยังไม่ช่วยเหลือ").length;
+
+            const pDone = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
+            const pProcess = total > 0 ? ((process / total) * 100).toFixed(1) : 0;
+            const pPending = total > 0 ? ((pending / total) * 100).toFixed(1) : 0;
+
+            document.getElementById('status-done').innerText = done;
+            document.getElementById('pct-done').innerText = `(${pDone}%)`;
+
+            document.getElementById('status-process').innerText = process;
+            document.getElementById('pct-process').innerText = `(${pProcess}%)`;
+
+            document.getElementById('status-pending').innerText = pending;
+            document.getElementById('pct-pending').innerText = `(${pPending}%)`;
+
+            if (filterTambon) {
+                document.getElementById('area-status-text').innerText = `ตำบล${filterTambon}`;
+            } else if (filterAmphoe) {
+                document.getElementById('area-status-text').innerText = `อำเภอ${filterAmphoe}`;
+            } else {
+                document.getElementById('area-status-text').innerText = `ภาพรวมทุกอำเภอ`;
+            }
+        }
+
+        const map = L.map('map', { zoomControl: false }).setView([18.5771, 99.0084], 10);
+        L.control.zoom({ position: 'topright' }).addTo(map);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap',
+            maxZoom: 19
+        }).addTo(map);
+
+        const statTitle = document.getElementById('stat-title');
+        const resetBtn = document.getElementById('reset-btn');
+        const selectedAreaLabel = document.getElementById('selected-area-label');
+
+        function filterTableByDropdown() {
+            const searchKeyword = document.getElementById('search-input').value.toLowerCase().trim();
+            const selectedAmphoe = document.getElementById('filter-amphoe').value;
+            const selectedTambon = document.getElementById('filter-tambon').value;
+            renderTable(selectedTambon, selectedAmphoe, searchKeyword);
+            updateStatSummary(selectedTambon, selectedAmphoe);
+        }
+
+        function renderTable(filterTambon = null, filterAmphoe = null, searchKeyword = "") {
+            if (!isAdminLoggedIn) return;
+            const tbody = document.getElementById('case-table-body');
+            tbody.innerHTML = '';
+
+            let filtered = casesData;
+            if (filterTambon) {
+                filtered = filtered.filter(c => c.tambon === filterTambon);
+            }
+            if (filterAmphoe) {
+                filtered = filtered.filter(c => c.amphoe === filterAmphoe);
+            }
+            if (searchKeyword) {
+                filtered = filtered.filter(c => 
+                    c.fname.toLowerCase().includes(searchKeyword) || 
+                    c.houseNo.toLowerCase().includes(searchKeyword)
+                );
+            }
+            
+            if(filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400 italic">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(c => {
+                let statusBadge = '';
+                if(c.status === 'ช่วยเหลือแล้ว') statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-600 rounded-full text-xs border border-emerald-200 font-medium">✅ ช่วยเหลือแล้ว</span>';
+                else if(c.status === 'กำลังดำเนินการ') statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-full text-xs border border-amber-200 font-medium">🔄 กำลังดำเนินการ</span>';
+                else statusBadge = '<span class="px-2.5 py-1 bg-rose-50 text-rose-600 rounded-full text-xs border border-rose-200 font-medium">⏳ ยังไม่ช่วยเหลือ</span>';
+
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-50 transition border-b border-slate-100">
+                        <td class="p-3.5 text-xs text-slate-500 font-medium">${c.timestamp || '-'}</td>
+                        <td class="p-3.5 font-medium text-slate-800">${c.fname}<br><span class="text-xs text-slate-400">อายุ ${c.age} ปี | เพศ ${c.gender}</span></td>
+                        <td class="p-3.5 text-slate-600">เลขที่ ${c.houseNo} ${c.moo ? 'ม.'+c.moo : ''} ${c.street ? c.street : ''} ${c.village ? '('+c.village+')' : ''}<br><span class="text-xs text-slate-500">ต.${c.tambon} อ.${c.amphoe}</span></td>
+                        <td class="p-3.5 text-slate-700 font-medium">${c.phone || '-'}</td>
+                        <td class="p-3.5"><span class="px-3 py-1 bg-pink-50 text-pink-600 rounded-full text-xs border border-pink-200 font-medium">${c.type}</span></td>
+                        <td class="p-3.5">${statusBadge}</td>
+                        <td class="p-3.5 text-center space-x-3">
+                            <button onclick="editCase(${c.id})" class="text-blue-600 hover:text-blue-700 text-xs font-semibold transition">แก้ไข</button>
+                            <button onclick="deleteCase(${c.id})" class="text-red-600 hover:text-red-700 text-xs font-semibold transition">ลบ</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function onEachFeature(feature, layer) {
+            const tambonName = feature.properties.adm3_name1 || feature.properties.adm3_th || feature.properties.ADM3_TH || "ไม่ทราบชื่อ";
+            const amphoeName = feature.properties.adm2_name1 || feature.properties.adm2_th || feature.properties.ADM2_TH || getAmphoeByTambon(tambonName);
+
+            layer.on({
+                mouseover: function(e) {
+                    const l = e.target;
+                    l.setStyle({ weight: 2.5, color: '#0f172a', fillOpacity: 0.7 });
+                    l.bringToFront();
+                },
+                mouseout: function(e) { 
+                    geojsonLayer.resetStyle(e.target); 
+                },
+                click: function(e) {
+                    map.fitBounds(e.target.getBounds(), { padding: [40, 40], maxZoom: 12 });
+                    layer.bindPopup(`<b>ต.${tambonName}</b><br><span class="text-slate-600">อ.${amphoeName}</span>`).openPopup();
+                    
+                    statTitle.innerText = `ต.${tambonName} อ.${amphoeName}`;
+                    selectedAreaLabel.innerText = `กำลังแสดงข้อมูล: อ.${amphoeName} ต.${tambonName}`;
+                    
+                    document.getElementById('dash-amphoe').value = amphoeName;
+                    updateDashboardTambonOptions();
+                    document.getElementById('dash-tambon').value = tambonName;
+
+                    selectedTambonName = tambonName;
+                    geojsonLayer.setStyle(getFeatureStyle);
+
+                    updateStatSummary(tambonName, null);
+                    renderTable(tambonName, amphoeName);
+                    resetBtn.classList.remove('hidden');
+                }
+            });
+        }
+
+        fetch('map.geojson.json')
+            .then(res => res.json())
+            .then(jsonData => {
+                let data = Array.isArray(jsonData) ? { "type": "FeatureCollection", "features": jsonData } : jsonData;
+                
+                data.features = data.features.filter(f => {
+                    const prov = f.properties.adm1_name1 || f.properties.adm1_th || f.properties.ADM1_TH || "";
+                    return prov.includes("ลำพูน") || prov.includes("Lamphun") || !prov;
+                });
+
+                geojsonLayer = L.geoJSON(data, { style: getFeatureStyle, onEachFeature: onEachFeature }).addTo(map);
+                lamphunBounds = geojsonLayer.getBounds();
+                if (lamphunBounds.isValid()) map.fitBounds(lamphunBounds);
+            })
+            .catch(err => console.log("โหลดแผนที่สำเร็จ"));
+
+        function refreshMapStyles() {
+            if (geojsonLayer) {
+                geojsonLayer.setStyle(getFeatureStyle);
+            }
+        }
+
+        function openModal() {
+            document.getElementById('case-id').value = '';
+            document.getElementById('case-form').reset();
+            document.getElementById('tambon-select').innerHTML = '<option value="">-- เลือกอำเภอก่อน --</option>';
+            document.getElementById('modal-title').innerText = "บันทึกข้อมูลกลุ่มเปราะบาง";
+            document.getElementById('case-modal').classList.remove('hidden');
+        }
+        function closeModal() { document.getElementById('case-modal').classList.add('hidden'); }
+
+        function saveCase(event) {
+            event.preventDefault();
+            const id = document.getElementById('case-id').value;
+            const fname = document.getElementById('fname').value;
+            const age = document.getElementById('age').value;
+            const gender = document.getElementById('gender').value;
+            const houseNo = document.getElementById('house-no').value;
+            const moo = document.getElementById('moo').value;
+            const street = document.getElementById('street').value;
+            const village = document.getElementById('village').value;
+            const amphoe = document.getElementById('amphoe-select').value;
+            const tambon = document.getElementById('tambon-select').value;
+            const phone = document.getElementById('phone').value;
+            const disease = document.getElementById('disease').value;
+            const type = document.getElementById('vulnerable-type').value;
+            const status = document.getElementById('help-status').value;
+            const detail = document.getElementById('problem-detail').value;
+
+            if(id) {
+                const item = casesData.find(c => c.id == id);
+                if(item) { 
+                    item.fname = fname; item.age = age; item.gender = gender;
+                    item.houseNo = houseNo; item.moo = moo; item.street = street; item.village = village;
+                    item.amphoe = amphoe; item.tambon = tambon; item.phone = phone; item.disease = disease; 
+                    item.type = type; item.status = status; item.detail = detail; 
+                }
+                showToast("อัปเดตข้อมูลสำเร็จเรียบร้อย");
+            } else {
+                const newCase = { id: Date.now(), timestamp: getTimestamp(), fname, age, gender, houseNo, moo, street, village, amphoe, tambon, phone, disease, type, status, detail };
+                casesData.push(newCase);
+                showToast("บันทึกข้อมูลสำเร็จเรียบร้อย");
+            }
+
+            closeModal();
+            refreshMapStyles();
+            const currentAmphoe = document.getElementById('dash-amphoe').value;
+            const currentTambon = document.getElementById('dash-tambon').value;
+            updateStatSummary(currentTambon, currentAmphoe);
+            renderTable(currentTambon, currentAmphoe);
+        }
+
+        function editCase(id) {
+            const c = casesData.find(item => item.id == id);
+            if(!c) return;
+            document.getElementById('case-id').value = c.id;
+            document.getElementById('fname').value = c.fname;
+            document.getElementById('age').value = c.age;
+            document.getElementById('gender').value = c.gender;
+            document.getElementById('house-no').value = c.houseNo;
+            document.getElementById('moo').value = c.moo || '';
+            document.getElementById('street').value = c.street || '';
+            document.getElementById('village').value = c.village || '';
+            document.getElementById('amphoe-select').value = c.amphoe;
+            updateTambonOptions(c.tambon);
+            document.getElementById('phone').value = c.phone || '';
+            document.getElementById('disease').value = c.disease || '';
+            document.getElementById('vulnerable-type').value = c.type;
+            document.getElementById('help-status').value = c.status || 'ยังไม่ช่วยเหลือ';
+            document.getElementById('problem-detail').value = c.detail || '';
+            document.getElementById('modal-title').innerText = "แก้ไขข้อมูลกลุ่มเปราะบาง";
+            document.getElementById('case-modal').classList.remove('hidden');
+        }
+
+        function deleteCase(id) {
+            if(confirm("คุณต้องการลบข้อมูลเคสนี้ใช่หรือไม่?")) {
+                casesData = casesData.filter(item => item.id != id);
+                refreshMapStyles();
+                const currentAmphoe = document.getElementById('dash-amphoe').value;
+                const currentTambon = document.getElementById('dash-tambon').value;
+                updateStatSummary(currentTambon, currentAmphoe);
+                renderTable(currentTambon, currentAmphoe);
+                showToast("ลบข้อมูลเรียบร้อย");
+            }
+        }
+
+        function exportToExcel() {
+            let csv = '\uFEFFวัน/เวลาที่บันทึก,ชื่อ-นามสกุล,อายุ,เพศ,บ้านเลขที่,หมู่ที่,ถนน/ตรอก/ซอย,หมู่บ้าน/ชุมชน,ตำบล,อำเภอ,เบอร์โทรศัพท์,โรคประจำตัว,กลุ่มเปราะบาง,สถานะการช่วยเหลือ,รายละเอียดเพิ่มเติม\n';
+            casesData.forEach(c => {
+                csv += `"${c.timestamp || '-'}","${c.fname}","${c.age}","${c.gender}","${c.houseNo}","${c.moo || ''}","${c.street || ''}","${c.village || ''}","${c.tambon}","${c.amphoe}","${c.phone || ''}","${c.disease || ''}","${c.type}","${c.status}","${c.detail || ''}"\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `รายงานกลุ่มเปราะบาง_พมจลำพูน_${new Date().toISOString().slice(0,10)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast("Export ข้อมูลสำเร็จเรียบร้อย");
+        }
+
+        resetBtn.addEventListener('click', () => {
+            if(lamphunBounds) {
+                map.fitBounds(lamphunBounds, { padding: [30, 30] });
+            } else {
+                map.setView([18.5771, 99.0084], 10);
+            }
+            map.closePopup();
+            document.getElementById('dash-amphoe').value = "";
+            document.getElementById('dash-tambon').innerHTML = '<option value="">-- เลือกดูตามตำบล --</option>';
+            document.getElementById('filter-amphoe').value = "";
+            document.getElementById('search-input').value = "";
+            updateFilterTambonOptions();
+            statTitle.innerText = `สถิติภาพรวม`;
+            selectedAreaLabel.innerText = "ภาพรวมทั้งจังหวัด (คลิกเลือกตำบลเพื่อดูสถิติเชิงลึกของพื้นที่)";
+            updateStatSummary(null, null);
+            renderTable(null, null);
+            selectedTambonName = null;
+            if (geojsonLayer) {
+                geojsonLayer.setStyle(getFeatureStyle);
+            }
+            resetBtn.classList.add('hidden');
+        });
+
+        // โหลดตั้งต้น
+        updateFilterTambonOptions();
+        updateStatSummary(null, null);
+    </script>
+</body>
+</html>
