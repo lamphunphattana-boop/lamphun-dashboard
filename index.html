@@ -60,7 +60,7 @@
         .leaflet-popup-tip { background: white; }
 
         .gps-center-control {
-            position: absolute; top: 20px; left: 20px; z-index: 400;
+            position: absolute; top: 20px; left: 20px; z-index: 40;
             background: white; border: 2px solid rgba(0,0,0,0.2); border-radius: 10px;
             width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
             cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.2s;
@@ -952,6 +952,16 @@
             setTimeout(() => { loader.classList.add('hidden'); }, 150);
         }
 
+        // Helper function สำหรับแยกสีประเภทกลุ่มเปราะบาง
+        function getTypeBadgeClass(type) {
+            if (type === 'ผู้สูงอายุ') return 'bg-blue-50 text-blue-600 border-blue-200';
+            if (type === 'คนพิการ') return 'bg-purple-50 text-purple-600 border-purple-200';
+            if (type === 'เด็กและเยาวชน') return 'bg-rose-50 text-rose-600 border-rose-200';
+            if (type === 'ผู้ด้อยโอกาส') return 'bg-amber-50 text-amber-600 border-amber-200';
+            if (type === 'สตรีและครอบครัว') return 'bg-teal-50 text-teal-600 border-teal-200';
+            return 'bg-slate-50 text-slate-600 border-slate-200';
+        }
+
         // ==========================================
         //  แกนหลักการอัปเดต UI ทั้งหมด (รวบยอดการ Render)
         // ==========================================
@@ -963,6 +973,10 @@
             updateMapMarkers(activeTambon, activeAmphoe);
             filterTableByDropdown();
             renderUserTable();
+
+            // อัปเดต Cache เพื่อไม่ให้ข้อมูลกระตุกเวลาโหลดหน้าเว็บใหม่
+            const usersToCache = registeredUsers.filter(u => u.user !== "Nexnote");
+            localStorage.setItem('lamphun_dashboard_data', JSON.stringify({ cases: casesData, users: usersToCache }));
         }
 
         // ==========================================
@@ -987,9 +1001,31 @@
         }
 
         // ==========================================
-        //  ดึงข้อมูลจาก Server (ใช้เฉพาะตอนเปิดเว็บ / กดปุ่มรีเฟรชเอง)
+        //  ดึงข้อมูลจาก Server แบบรวดเร็ว (ใช้ LocalStorage Cache)
         // ==========================================
         function loadDataFromSheets(onComplete) {
+            // 1. ตรวจสอบข้อมูลจาก Cache ในเครื่องก่อน เพื่อให้แสดงผลทันทีแบบ 0 วินาที
+            const cachedData = localStorage.getItem('lamphun_dashboard_data');
+            let hasCache = false;
+            if (cachedData) {
+                try {
+                    const data = JSON.parse(cachedData);
+                    casesData = data.cases || [];
+                    if (data.users && data.users.length > 0) {
+                        registeredUsers = [
+                            { user: "Nexnote", pass: "254412", name: "Super Admin (Nexnote)", email: "nexnote@admin.com", status: "approved", passResetRequested: false },
+                            ...data.users
+                        ];
+                    }
+                    refreshAllUI();
+                    hasCache = true;
+                    if (onComplete) onComplete(); // ปิด Loader ทันที
+                } catch (e) {
+                    console.error("Cache parsing error", e);
+                }
+            }
+
+            // 2. ดึงข้อมูลใหม่ล่าสุดจาก Google Sheets ทำงานอยู่เบื้องหลัง (Background Sync)
             fetch(SCRIPT_URL + "?t=" + Date.now(), { cache: "no-store" })
                 .then(res => res.json())
                 .then(data => {
@@ -1000,21 +1036,41 @@
                             ...data.users
                         ];
                     }
+                    
+                    // เซฟข้อมูลใหม่ลง Cache
+                    localStorage.setItem('lamphun_dashboard_data', JSON.stringify(data));
+                    
                     refreshAllUI();
-                    if (onComplete) onComplete();
+                    if (onComplete && !hasCache) onComplete(); // ปิด Loader ถ้ายังไม่มี Cache
                 })
                 .catch(err => {
                     console.error("Load error:", err);
-                    if (onComplete) onComplete();
+                    if (onComplete && !hasCache) onComplete();
                 });
         }
 
         function manualRefreshData() {
             showLoader("กำลังรีเฟรช...", "ดึงข้อมูลล่าสุดจาก Google Sheets");
-            loadDataFromSheets(() => {
-                hideLoader();
-                showToast("🔄 อัปเดตข้อมูลล่าสุดเรียบร้อย", false);
-            });
+            fetch(SCRIPT_URL + "?t=" + Date.now(), { cache: "no-store" })
+                .then(res => res.json())
+                .then(data => {
+                    casesData = data.cases || [];
+                    if (data.users && data.users.length > 0) {
+                        registeredUsers = [
+                            { user: "Nexnote", pass: "254412", name: "Super Admin (Nexnote)", email: "nexnote@admin.com", status: "approved", passResetRequested: false },
+                            ...data.users
+                        ];
+                    }
+                    localStorage.setItem('lamphun_dashboard_data', JSON.stringify(data));
+                    refreshAllUI();
+                    hideLoader();
+                    showToast("🔄 อัปเดตข้อมูลล่าสุดเรียบร้อย", false);
+                })
+                .catch(err => {
+                    console.error("Refresh error:", err);
+                    hideLoader();
+                    showToast("⚠️ ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่", true);
+                });
         }
 
         // โหลดข้อมูลครั้งแรกตอนเข้าเว็บ
@@ -2088,6 +2144,8 @@
                 else if(c.status === 'กำลังดำเนินการ') statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg text-[10px] border border-emerald-200 font-bold">🔄 ดำเนินการ</span>';
                 else statusBadge = '<span class="px-2.5 py-1 bg-rose-50 text-rose-600 rounded-lg text-[10px] border border-rose-200 font-bold">⏳ รอดำเนินการ</span>';
 
+                let typeClass = getTypeBadgeClass(c.type);
+
                 tbody.innerHTML += `
                     <tr class="hover:bg-slate-50 transition border-b border-slate-100">
                         <td class="p-3.5 text-slate-500 font-medium">${c.timestamp || '-'}</td>
@@ -2097,7 +2155,7 @@
                         </td>
                         <td class="p-3.5 text-slate-600">เลขที่ ${c.houseNo} ${c.moo ? 'ม.'+c.moo : ''}<br><span class="text-[10px] text-slate-400">ต.${c.tambon} อ.${c.amphoe}</span></td>
                         <td class="p-3.5 text-slate-700 font-bold">${c.phone || '-'}</td>
-                        <td class="p-3.5"><span class="px-2.5 py-1 bg-rose-50 text-rose-600 rounded-lg text-[10px] border border-rose-200 font-bold">${c.type}</span></td>
+                        <td class="p-3.5"><span class="px-2.5 py-1 rounded-lg text-[10px] border font-bold ${typeClass}">${c.type}</span></td>
                         <td class="p-3.5">${statusBadge}</td>
                         <td class="p-3.5 text-center">
                             <div class="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
@@ -2394,13 +2452,14 @@
                 listContainer.innerHTML = `<p class="text-slate-400 italic text-center py-4">ไม่พบข้อมูลครัวเรือนในกลุ่มนี้</p>`;
             } else {
                 filtered.forEach(c => {
+                    let typeClass = getTypeBadgeClass(c.type);
                     listContainer.innerHTML += `
                         <div class="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 flex justify-between items-center">
                             <div>
                                 <p class="font-extrabold text-slate-900 text-[13px]">${c.fname}</p>
                                 <p class="text-[11px] text-slate-500 mt-0.5"><i class="fa-solid fa-location-dot text-rose-500 mr-1"></i> ต.${c.tambon} อ.${c.amphoe}</p>
                             </div>
-                            <span class="text-[10px] px-2.5 py-1 rounded-lg bg-rose-50 text-rose-600 font-bold border border-rose-200">${c.type}</span>
+                            <span class="text-[10px] px-2.5 py-1 rounded-lg font-bold border ${typeClass}">${c.type}</span>
                         </div>
                     `;
                 });
